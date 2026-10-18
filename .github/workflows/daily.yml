@@ -1,0 +1,47 @@
+name: Daily kids video
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # every day at 08:00 UTC
+  workflow_dispatch:       # lets you start it manually with a button
+
+permissions:
+  contents: write
+
+jobs:
+  make-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install edge-tts google-api-python-client google-auth
+
+      - name: Make and upload the video
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          MUSIC_DIR: music
+          # ---- settings you can change ----
+          LANGUAGE: English
+          VOICE: en-US-AnaNeural
+          PRIVACY: private        # private, unlisted or public
+          SCENE_COUNT: "8"
+        run: python main.py
+
+      - name: Save topic history
+        run: |
+          git config user.name "video-bot"
+          git config user.email "video-bot@users.noreply.github.com"
+          git add history.json
+          git diff --cached --quiet || (git commit -m "Update history" && git push)
