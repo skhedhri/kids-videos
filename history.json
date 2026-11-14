@@ -38,5 +38,20 @@
     "topic": "The Ukulele",
     "status": "rejected",
     "reason": "The script contains a call to action asking the viewer to 'Follow for a new fun fact every day,' which constitutes a commercial-like request for engagement."
+  },
+  {
+    "topic": "The Honey Bee's Dance",
+    "status": "rejected",
+    "reason": "The script includes a call to action asking users to 'Follow' for more, which constitutes commercial promotion and is inappropriate for this age group."
+  },
+  {
+    "topic": "The Chameleon's Color Change",
+    "status": "rejected",
+    "reason": "The script includes a call to action to 'Follow' for more content, which constitutes a commercial-like request for social media engagement, violating the restriction against commercial content."
+  },
+  {
+    "topic": "The Mimic Octopus",
+    "status": "rejected",
+    "reason": "The script includes a call to action ('Follow for a new fun fact every day!'), which constitutes commercial solicitation for social media engagement, violating the child-safety policy regarding commercialism."
   }
 ]
