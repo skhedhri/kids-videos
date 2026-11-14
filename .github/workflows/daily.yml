@@ -37,7 +37,8 @@ jobs:
           LANGUAGE: English
           VOICE: en-US-AnaNeural
           PRIVACY: private        # private, unlisted or public
-          SCENE_COUNT: "8"
+          SCENE_COUNT: "6"
+          VIDEO_FORMAT: shorts    # shorts (vertical) or landscape
         run: python main.py
 
       - name: Save topic history
