@@ -3,5 +3,15 @@
     "topic": "The Street Sweeper",
     "status": "uploaded",
     "videoId": "qoA89FJN3C4"
+  },
+  {
+    "topic": "Flossing teeth for kids",
+    "status": "rejected",
+    "reason": "The content provides specific dental hygiene instructions, which constitutes medical advice, a category restricted by the safety guidelines."
+  },
+  {
+    "topic": "Sharing a garden harvest",
+    "status": "uploaded",
+    "videoId": "ock8nmTnagc"
   }
 ]
