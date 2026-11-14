@@ -13,6 +13,7 @@ import glob
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -155,12 +156,17 @@ def tts(text, voice, dest, workdir, idx):
 TRANSITION = 0.3   # seconds of cross-dissolve between scenes
 PAD = 0.8          # pause after each narration (must be >= 2 * TRANSITION + 0.1)
 
-# Camera moves: z = zoom factor, x/y = crop position. F = frames, on = frame number.
+# Camera moves with a gentle "bounce" (sin wobble) so still pictures feel alive.
+# F = frames, on = frame number.
 MOVES = [
-    ("zoom in",   "1+0.12*on/{F}",    "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
-    ("pan right", "1.12",             "(iw-iw/zoom)*on/{F}",     "ih/2-(ih/zoom/2)"),
-    ("zoom out",  "1.12-0.12*on/{F}", "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
-    ("pan left",  "1.12",             "(iw-iw/zoom)*(1-on/{F})", "ih/2-(ih/zoom/2)"),
+    ("zoom in",   "1.06+0.10*on/{F}+0.012*sin(on/4)",
+                  "iw/2-(iw/zoom/2)+iw*0.012*sin(on/11)", "ih/2-(ih/zoom/2)+ih*0.010*sin(on/7)"),
+    ("pan right", "1.14+0.012*sin(on/4)",
+                  "(iw-iw/zoom)*on/{F}", "ih/2-(ih/zoom/2)+ih*0.012*sin(on/6)"),
+    ("zoom out",  "1.16-0.10*on/{F}+0.012*sin(on/4)",
+                  "iw/2-(iw/zoom/2)+iw*0.012*sin(on/9)", "ih/2-(ih/zoom/2)+ih*0.010*sin(on/8)"),
+    ("pan left",  "1.14+0.012*sin(on/4)",
+                  "(iw-iw/zoom)*(1-on/{F})", "ih/2-(ih/zoom/2)+ih*0.012*sin(on/6)"),
 ]
 
 
@@ -180,49 +186,116 @@ def make_clip(img, out, dur, move_idx):
     ])
 
 
-def assemble(clips, audios, out):
-    """Cross-dissolve the clips and place each narration when its scene is fully visible."""
+TRANSITION_STYLES = ["slideleft", "slideup", "circleopen", "wipeleft",
+                     "smoothleft", "fadewhite", "radial", "slideright"]
+CAPTIONS = os.environ.get("CAPTIONS", "on").lower() != "off"
+FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+]
+
+
+def find_font():
+    for p in FONT_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def caption_filters(texts, starts, durs, workdir):
+    """Big word-group captions that pop in (one drawtext per group)."""
+    font = find_font()
+    if not (CAPTIONS and font):
+        return []
+    size = 60 if SHORTS else 52
+    filters = []
+    for i, text in enumerate(texts):
+        clean = re.sub(r"[^\w\s'.,!?-]", "", text.replace("\u2019", "'"))
+        groups, cur = [], []
+        for w in clean.split():
+            if cur and (len(cur) >= 2 or len(" ".join(cur + [w])) > 14):
+                groups.append(" ".join(cur))
+                cur = []
+            cur.append(w)
+        if cur:
+            groups.append(" ".join(cur))
+        total = sum(len(g) + 2 for g in groups) or 1
+        acc = 0
+        for j, g in enumerate(groups):
+            t0 = starts[i] + durs[i] * acc / total
+            acc += len(g) + 2
+            t1 = starts[i] + durs[i] * acc / total
+            if j == len(groups) - 1:
+                t1 = starts[i] + durs[i] + 0.2
+            path = os.path.join(workdir, f"cap_{i}_{j}.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(g)
+            filters.append(
+                f"drawtext=fontfile='{font}':textfile='{path}':expansion=none:"
+                f"fontsize='{size}*(1+0.3*max(0,1-(t-{t0:.3f})*7))':"
+                f"fontcolor=white:borderw=6:bordercolor=black:"
+                f"x=(w-text_w)/2:y=h*0.72:enable='between(t,{t0:.3f},{t1:.3f})'"
+            )
+    return filters
+
+
+def assemble(clips, audios, out, texts=None):
+    """Dynamic transitions + pop-in captions; each narration starts when its scene is visible."""
     n = len(clips)
     durs = [duration(c) for c in clips]
+    adurs = [duration(a) for a in audios]
+    workdir = os.path.dirname(out)
     inputs, filters = [], []
     for c in clips:
         inputs += ["-i", c]
     for a in audios:
         inputs += ["-i", a]
 
-    # video: chain of xfade transitions
+    # video: chain of xfade transitions (a different style at each cut)
+    styles = random.sample(TRANSITION_STYLES, k=min(len(TRANSITION_STYLES), max(n - 1, 0)))
+    while len(styles) < n - 1:
+        styles.append(random.choice(TRANSITION_STYLES))
     if n == 1:
-        vlabel = "0:v"
-        total = durs[0]
+        vlabel, total = "0:v", durs[0]
     else:
-        prev = "0:v"
-        acc = durs[0]
+        prev, acc = "0:v", durs[0]
         for k in range(1, n):
             offset = acc - TRANSITION
             lab = f"v{k}"
             filters.append(
-                f"[{prev}][{k}:v]xfade=transition=fade:duration={TRANSITION}:offset={offset:.3f}[{lab}]")
+                f"[{prev}][{k}:v]xfade=transition={styles[k - 1]}:"
+                f"duration={TRANSITION}:offset={offset:.3f}[{lab}]")
             prev = lab
             acc = offset + durs[k]
         vlabel, total = prev, acc
 
     # audio: each narration starts once its scene is fully visible
-    scene_start = 0.0
-    labels = []
+    scene_start, starts, labels = 0.0, [], []
     for i in range(n):
         if i > 0:
             scene_start += durs[i - 1] - TRANSITION
-        delay_ms = int((scene_start + (TRANSITION if i > 0 else 0.3)) * 1000)
+        begin = scene_start + (TRANSITION if i > 0 else 0.3)
+        starts.append(begin)
         lab = f"s{i}"
         filters.append(
             f"[{n + i}:a]aformat=sample_rates=44100:channel_layouts=stereo,"
-            f"adelay={delay_ms}:all=1[{lab}]")
+            f"adelay={int(begin * 1000)}:all=1[{lab}]")
         labels.append(f"[{lab}]")
     filters.append("".join(labels) + f"amix=inputs={n}:duration=longest:normalize=0[aout]")
 
+    # captions on top of the finished video
+    caps = caption_filters(texts, starts, adurs, workdir) if texts else []
+    if caps:
+        filters.append(f"[{vlabel}]" + ",".join(caps) + "[vout]")
+        vmap = "[vout]"
+    else:
+        vmap = f"[{vlabel}]" if vlabel != "0:v" else "0:v"
+
     run([
         "ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters),
-        "-map", f"[{vlabel}]" if n > 1 else "0:v", "-map", "[aout]",
+        "-map", vmap, "-map", "[aout]",
         "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", out,
     ])
@@ -236,7 +309,7 @@ def render(payload):
 
     workdir = tempfile.mkdtemp(prefix="render_")
     try:
-        clips, audios = [], []
+        clips, audios, texts = [], [], []
         fallbacks = 0
         move0 = random.randint(0, 3)
         base_seed = random.randint(1, 10_000)
@@ -257,6 +330,7 @@ def render(payload):
             make_clip(img, clip, duration(audio) + PAD, move0 + i)
             clips.append(clip)
             audios.append(audio)
+            texts.append(narration)
             print(f"scene {i + 1}/{len(scenes)} done", flush=True)
 
         if fallbacks > len(scenes) // 2:
@@ -265,7 +339,7 @@ def render(payload):
                 "Not uploading a video without pictures. Add a POLLINATIONS_API_KEY secret.")
 
         joined = os.path.join(workdir, "joined.mp4")
-        assemble(clips, audios, joined)
+        assemble(clips, audios, joined, texts)
 
         final = joined
         tracks = glob.glob(os.path.join(MUSIC_DIR, "*.mp3"))
