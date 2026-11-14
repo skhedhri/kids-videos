@@ -23,5 +23,20 @@
     "topic": "Sea Otter Pups",
     "status": "uploaded",
     "videoId": "CooTDp_8nQ0"
+  },
+  {
+    "topic": "Saturn's Rings",
+    "status": "rejected",
+    "reason": "The script includes a call to action ('Follow for a new fun fact every day!') which promotes social media engagement, violating the 'no commercial/promotional' constraint for child-safety content."
+  },
+  {
+    "topic": "The slide trombone",
+    "status": "rejected",
+    "reason": "The script contains a call to action asking users to 'Follow for a new fun fact every day!', which is a commercial engagement tactic aimed at social media growth, violating the 'no commercial' rule."
+  },
+  {
+    "topic": "The Ukulele",
+    "status": "rejected",
+    "reason": "The script contains a call to action asking the viewer to 'Follow for a new fun fact every day,' which constitutes a commercial-like request for engagement."
   }
 ]
