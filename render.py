@@ -58,7 +58,8 @@ def fetch_cloudflare(prompt, dest, seed):
         return False
     url = (f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}"
            "/ai/run/@cf/black-forest-labs/flux-1-schnell")
-    body = json.dumps({"prompt": prompt[:2000], "steps": 6, "seed": seed}).encode()
+    # Only documented inputs: prompt (max 2048 chars) and steps (max 8).
+    body = json.dumps({"prompt": prompt[:2000], "steps": 6}).encode()
     for attempt in range(3):
         try:
             req = urllib.request.Request(url, data=body, headers={
@@ -71,7 +72,14 @@ def fetch_cloudflare(prompt, dest, seed):
                     f.write(img)
                 return True
         except urllib.error.HTTPError as e:
-            print(f"image [cloudflare] attempt {attempt + 1} failed: HTTP {e.code}", flush=True)
+            try:
+                detail = e.read().decode("utf-8", "ignore")[:300]
+            except Exception:
+                detail = ""
+            print(f"image [cloudflare] attempt {attempt + 1} failed: HTTP {e.code} {detail}", flush=True)
+            if "daily free allocation" in detail.lower() or "4006" in detail:
+                _dead_endpoints.add("cloudflare")  # free allowance used up for today
+                return False
             if e.code in (401, 403):
                 _dead_endpoints.add("cloudflare")  # wrong token / no permission
                 return False
