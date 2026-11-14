@@ -8,6 +8,7 @@ Per scene: Edge TTS narration (free) + AI image from Pollinations (free, no key)
 + slow zoom effect, then all scenes are concatenated. Optional background music
 is mixed in from any .mp3 files found in /music.
 """
+import base64
 import glob
 import json
 import os
@@ -47,8 +48,45 @@ POLLINATIONS_KEY = os.environ.get("POLLINATIONS_API_KEY", "").strip()
 _dead_endpoints = set()  # endpoints that answered 401/402/403: skipped for the rest of the run
 
 
+CF_ACCOUNT = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+CF_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+
+
+def fetch_cloudflare(prompt, dest, seed):
+    """FLUX.1 [schnell] on Cloudflare Workers AI (free daily allowance). Returns True on success."""
+    if not (CF_ACCOUNT and CF_TOKEN) or "cloudflare" in _dead_endpoints:
+        return False
+    url = (f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT}"
+           "/ai/run/@cf/black-forest-labs/flux-1-schnell")
+    body = json.dumps({"prompt": prompt[:2000], "steps": 6, "seed": seed}).encode()
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, data=body, headers={
+                "Authorization": f"Bearer {CF_TOKEN}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = json.load(r)
+            img = base64.b64decode(data["result"]["image"])
+            if len(img) > 5000:
+                with open(dest, "wb") as f:
+                    f.write(img)
+                return True
+        except urllib.error.HTTPError as e:
+            print(f"image [cloudflare] attempt {attempt + 1} failed: HTTP {e.code}", flush=True)
+            if e.code in (401, 403):
+                _dead_endpoints.add("cloudflare")  # wrong token / no permission
+                return False
+            if e.code == 429:
+                time.sleep(15)
+        except Exception as e:
+            print(f"image [cloudflare] attempt {attempt + 1} failed: {e}", flush=True)
+        time.sleep(4 * (attempt + 1))
+    return False
+
+
 def fetch_image(prompt, dest, seed):
-    """Download an AI image from Pollinations. Returns True on success."""
+    """Cloudflare FLUX first, then Pollinations as a backup. Returns True on success."""
+    if fetch_cloudflare(prompt, dest, seed):
+        return True
     q = urllib.parse.quote(prompt)
     params = f"width={W}&height={H}&seed={seed}&nologo=true&private=true"
     endpoints = []
