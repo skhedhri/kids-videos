@@ -12,7 +12,7 @@ import render  # render.py: edge-tts + Pollinations images + FFmpeg
 # Tried in order; if Google retires one (HTTP 404) the next one is used.
 # You can override with a GEMINI_MODELS env value, comma-separated.
 GEMINI_MODELS = [m.strip() for m in os.environ.get(
-    "GEMINI_MODELS", "gemini-3.8-flash,gemini-3.1-flash-lite,gemini-4-hydrogen"
+    "GEMINI_MODELS", "gemini-3.1-flash-lite,gemini-3.8-flash,gemini-4-hydrogen"
 ).split(",") if m.strip()]
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
 LANGUAGE = os.environ.get("LANGUAGE", "English")
@@ -30,33 +30,41 @@ CATEGORIES = [
 
 
 def gemini_json(prompt):
-    body = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseMimeType": "application/json", "temperature": 1},
-    }).encode()
     last = None
     for model in list(GEMINI_MODELS):
-        for attempt in range(3):
+        low_thinking = True  # keep answers fast; dropped automatically if not accepted
+        attempt = 0
+        while attempt < 2:
+            cfg = {"responseMimeType": "application/json", "temperature": 1}
+            if low_thinking:
+                cfg["thinkingConfig"] = {"thinkingLevel": "low"}
+            body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                               "generationConfig": cfg}).encode()
             try:
                 req = urllib.request.Request(
                     f"{GEMINI_BASE}{model}:generateContent", data=body,
                     headers={"Content-Type": "application/json",
                              "x-goog-api-key": os.environ["GEMINI_API_KEY"]})
-                with urllib.request.urlopen(req, timeout=180) as r:
+                with urllib.request.urlopen(req, timeout=240) as r:
                     data = json.load(r)
                 parts = data["candidates"][0]["content"]["parts"]
                 text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
                 return json.loads(text.replace("```json", "").replace("```", "").strip())
             except urllib.error.HTTPError as e:
                 last = e
-                print(f"Gemini {model} attempt {attempt + 1} failed: HTTP {e.code}", flush=True)
+                print(f"Gemini {model} failed: HTTP {e.code}", flush=True)
+                if e.code == 400 and low_thinking:
+                    low_thinking = False  # retry same model without thinking setting
+                    continue
                 if e.code in (400, 403, 404):
-                    break  # model unavailable for this key: try the next model
-                time.sleep(10 * (attempt + 1))
+                    break  # model unavailable for this key: next model
+                attempt += 1
+                time.sleep(10)
             except Exception as e:
                 last = e
-                print(f"Gemini {model} attempt {attempt + 1} failed: {e}", flush=True)
-                time.sleep(10 * (attempt + 1))
+                print(f"Gemini {model} failed: {e}", flush=True)
+                attempt += 1
+                time.sleep(5)
     raise RuntimeError(f"Gemini failed on all models: {last}")
 
 
