@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import time
 import traceback
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -39,25 +40,43 @@ def duration(path):
     return float(out.strip())
 
 
+POLLINATIONS_KEY = os.environ.get("POLLINATIONS_API_KEY", "").strip()
+_dead_endpoints = set()  # endpoints that answered 401/402/403: skipped for the rest of the run
+
+
 def fetch_image(prompt, dest, seed):
     """Download an AI image from Pollinations. Returns True on success."""
-    url = (
-        "https://image.pollinations.ai/prompt/"
-        + urllib.parse.quote(prompt)
-        + f"?width={W}&height={H}&nologo=true&seed={seed}"
-    )
-    for attempt in range(4):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=120) as r:
-                data = r.read()
-            if len(data) > 5000:
-                with open(dest, "wb") as f:
-                    f.write(data)
-                return True
-        except Exception as e:  # network error, rate limit...
-            print(f"image attempt {attempt + 1} failed: {e}", flush=True)
-        time.sleep(5 * (attempt + 1))
+    q = urllib.parse.quote(prompt)
+    params = f"width={W}&height={H}&seed={seed}&nologo=true&private=true"
+    endpoints = []
+    if POLLINATIONS_KEY:
+        endpoints.append(("keyed", f"https://gen.pollinations.ai/image/{q}?model=flux&{params}",
+                          {"Authorization": f"Bearer {POLLINATIONS_KEY}"}))
+    endpoints.append(("keyless", f"https://gen.pollinations.ai/image/{q}?model=flux&{params}", {}))
+    endpoints.append(("legacy", f"https://image.pollinations.ai/prompt/{q}?{params}", {}))
+
+    for name, url, extra in endpoints:
+        if name in _dead_endpoints:
+            continue
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", **extra})
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    data = r.read()
+                if len(data) > 5000:
+                    with open(dest, "wb") as f:
+                        f.write(data)
+                    return True
+            except urllib.error.HTTPError as e:
+                print(f"image [{name}] attempt {attempt + 1} failed: HTTP {e.code}", flush=True)
+                if e.code in (401, 402, 403):
+                    _dead_endpoints.add(name)  # needs a key / no credit: do not retry
+                    break
+                if e.code == 429:
+                    time.sleep(15)
+            except Exception as e:
+                print(f"image [{name}] attempt {attempt + 1} failed: {e}", flush=True)
+            time.sleep(4 * (attempt + 1))
     return False
 
 
@@ -109,6 +128,7 @@ def render(payload):
     workdir = tempfile.mkdtemp(prefix="render_")
     try:
         clips = []
+        fallbacks = 0
         base_seed = random.randint(1, 10_000)
         for i, sc in enumerate(scenes):
             narration = str(sc.get("narration", "")).strip()[:MAX_NARRATION]
@@ -122,10 +142,16 @@ def render(payload):
 
             tts(narration, voice, audio, workdir, i)
             if not fetch_image(prompt, img, base_seed + i):
+                fallbacks += 1
                 fallback_image(img)
             make_clip(img, audio, clip, duration(audio) + 0.6)
             clips.append(clip)
             print(f"scene {i + 1}/{len(scenes)} done", flush=True)
+
+        if fallbacks > len(scenes) // 2:
+            raise RuntimeError(
+                f"Image service unavailable ({fallbacks}/{len(scenes)} images failed). "
+                "Not uploading a video without pictures. Add a POLLINATIONS_API_KEY secret.")
 
         listfile = os.path.join(workdir, "list.txt")
         with open(listfile, "w") as f:
