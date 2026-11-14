@@ -18,7 +18,8 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models/"
 LANGUAGE = os.environ.get("LANGUAGE", "English")
 VOICE = os.environ.get("VOICE", "en-US-AnaNeural")
 PRIVACY = os.environ.get("PRIVACY", "private")
-SCENES = int(os.environ.get("SCENE_COUNT", "8"))
+SCENES = int(os.environ.get("SCENE_COUNT", "6"))
+SHORTS = os.environ.get("VIDEO_FORMAT", "shorts").lower() == "shorts"
 
 CATEGORIES = [
     "Animals and their babies", "Colors and shapes", "Counting numbers 1 to 10",
@@ -69,19 +70,27 @@ def gemini_json(prompt):
 
 
 def write_script(category, recent):
+    style = (
+        "This is a vertical YouTube Short of about 40 seconds. Scene 1 is a curiosity HOOK that grabs "
+        "attention in the first 3 seconds (for example a surprising question or 'Did you know...?'). "
+        "Every narration is ONE or TWO very short, energetic sentences (maximum 14 words each). "
+        "The LAST scene ends with a fun question for the kids and 'Follow for a new fun fact every day!'. "
+        "Image prompts must describe a VERTICAL portrait composition with the subject centered, bold bright colors."
+        if SHORTS else
+        "Each narration is 2 or 3 short, simple, cheerful sentences a child can follow."
+    )
     return gemini_json(
         f"You write short, safe, educational videos for children aged 3 to 7.\n"
         f"Language of the narration: {LANGUAGE}.\nCategory: {category}.\n"
         f"Choose ONE fresh, specific topic in this category that is NOT in this list: "
         f"{json.dumps(recent)}.\n"
-        f"Write exactly {SCENES} scenes. Each narration is 2 or 3 short, simple, cheerful "
-        f"sentences a child can follow.\n"
+        f"Write exactly {SCENES} scenes. {style}\n"
         f"Rules: nothing scary, violent, romantic, commercial or branded; no real people; "
         f"no existing cartoon characters; no medical advice.\n"
-        'Return ONLY valid JSON: {"topic":"","title":"fun title under 70 characters with '
-        'one emoji","description":"2-3 sentences for parents","tags":["8 to 12 tags"],'
+        'Return ONLY valid JSON: {"topic":"","title":"catchy title under 60 characters with one emoji",'
+        '"description":"2-3 sentences for parents","tags":["8 to 12 tags"],'
         '"scenes":[{"narration":"","image_prompt":"English prompt: cute colorful flat '
-        'cartoon illustration of ..., child friendly, soft colors, no text, no letters"}]}'
+        'cartoon illustration of ..., vertical composition, child friendly, bold colors, no text, no letters"}]}'
     )
 
 
@@ -115,9 +124,10 @@ def upload(path, script):
         part="snippet,status",
         body={
             "snippet": {
-                "title": script["title"][:95],
-                "description": script["description"] + "\n\nMade with AI for kids.",
-                "tags": script["tags"][:12],
+                "title": (script["title"][:88] + (" #Shorts" if SHORTS else "")),
+                "description": script["description"] + "\n\nMade with AI for kids."
+                               + ("\n\n#Shorts #kids #learning" if SHORTS else ""),
+                "tags": (script["tags"][:11] + (["shorts"] if SHORTS else [])),
                 "categoryId": "27",
             },
             "status": {
