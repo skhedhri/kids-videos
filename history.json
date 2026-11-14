@@ -13,5 +13,15 @@
     "topic": "Sharing a garden harvest",
     "status": "uploaded",
     "videoId": "ock8nmTnagc"
+  },
+  {
+    "topic": "The Diplodocus long neck reach",
+    "status": "rejected",
+    "reason": "The script uses the name 'Dippy the Diplodocus,' which directly references 'Dippy,' the famous and iconic cast of the Diplodocus skeleton exhibited at the Natural History Museum in London, constituting a specific existing copyrighted character/brand entity."
+  },
+  {
+    "topic": "Sea Otter Pups",
+    "status": "uploaded",
+    "videoId": "CooTDp_8nQ0"
   }
 ]
