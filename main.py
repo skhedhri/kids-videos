@@ -78,7 +78,8 @@ def write_script(category, recent):
         "This is a vertical YouTube Short of about 40 seconds. Scene 1 is a curiosity HOOK that grabs "
         "attention in the first 3 seconds (for example a surprising question or 'Did you know...?'). "
         "Every narration is ONE or TWO very short, energetic sentences (maximum 14 words each). "
-        "The LAST scene ends with a fun question for the kids and 'Follow for a new fun fact every day!'. "
+        "The LAST scene ends with a fun question for the kids and a friendly goodbye like 'See you tomorrow for another fun fact!'. "
+        "Never ask kids to follow, subscribe, like, click or visit anything. "
         "Image prompts must describe a VERTICAL portrait composition with the subject centered, bold bright colors."
         if SHORTS else
         "Each narration is 2 or 3 short, simple, cheerful sentences a child can follow."
@@ -103,6 +104,7 @@ def write_script(category, recent):
 def is_safe(script):
     verdict = gemini_json(
         "You are a strict child-safety reviewer for videos aimed at ages 3 to 7. "
+        "A friendly goodbye such as 'see you tomorrow' is fine and is NOT commercial. "
         "It is UNSAFE if anything is scary, violent, sexual, hateful, political, "
         "commercial, brand-related, medical advice, mentions a real person or an "
         "existing copyrighted character, gives false facts, or is not age-appropriate. "
