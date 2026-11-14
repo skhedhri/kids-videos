@@ -103,19 +103,79 @@ def tts(text, voice, dest, workdir, idx):
     raise RuntimeError(f"TTS failed: {last.stderr.decode(errors='ignore')[:300] if last else ''}")
 
 
-def make_clip(img, audio, out, dur):
+TRANSITION = 0.5   # seconds of cross-dissolve between scenes
+PAD = 1.2          # silence after each narration (must be > TRANSITION)
+
+# Camera moves: z = zoom factor, x/y = crop position. F = frames, on = frame number.
+MOVES = [
+    ("zoom in",   "1+0.12*on/{F}",    "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
+    ("pan right", "1.12",             "(iw-iw/zoom)*on/{F}",     "ih/2-(ih/zoom/2)"),
+    ("zoom out",  "1.12-0.12*on/{F}", "iw/2-(iw/zoom/2)",        "ih/2-(ih/zoom/2)"),
+    ("pan left",  "1.12",             "(iw-iw/zoom)*(1-on/{F})", "ih/2-(ih/zoom/2)"),
+]
+
+
+def make_clip(img, out, dur, move_idx):
+    """Silent video clip of one image with a slow camera move."""
     frames = int(dur * FPS) + 1
-    inc = 0.12 / frames  # reaches 1.12x zoom exactly at the end of the clip
+    _, z, x, y = MOVES[move_idx % len(MOVES)]
+    z, x, y = (t.replace("{F}", str(frames)) for t in (z, x, y))
     vf = (
         f"scale={W * 2}:{H * 2}:force_original_aspect_ratio=increase,"
         f"crop={W * 2}:{H * 2},"
-        f"zoompan=z='min(zoom+{inc:.6f},1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d={frames}:s={W}x{H}:fps={FPS},format=yuv420p"
+        f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps={FPS},format=yuv420p"
     )
     run([
-        "ffmpeg", "-y", "-i", img, "-i", audio, "-vf", vf, "-af", "apad",
-        "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-r", str(FPS), out,
+        "ffmpeg", "-y", "-i", img, "-vf", vf, "-t", f"{dur:.3f}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-r", str(FPS), out,
+    ])
+
+
+def assemble(clips, audios, out):
+    """Cross-dissolve the clips and place each narration when its scene is fully visible."""
+    n = len(clips)
+    durs = [duration(c) for c in clips]
+    inputs, filters = [], []
+    for c in clips:
+        inputs += ["-i", c]
+    for a in audios:
+        inputs += ["-i", a]
+
+    # video: chain of xfade transitions
+    if n == 1:
+        vlabel = "0:v"
+        total = durs[0]
+    else:
+        prev = "0:v"
+        acc = durs[0]
+        for k in range(1, n):
+            offset = acc - TRANSITION
+            lab = f"v{k}"
+            filters.append(
+                f"[{prev}][{k}:v]xfade=transition=fade:duration={TRANSITION}:offset={offset:.3f}[{lab}]")
+            prev = lab
+            acc = offset + durs[k]
+        vlabel, total = prev, acc
+
+    # audio: each narration starts once its scene is fully visible
+    scene_start = 0.0
+    labels = []
+    for i in range(n):
+        if i > 0:
+            scene_start += durs[i - 1] - TRANSITION
+        delay_ms = int((scene_start + (TRANSITION if i > 0 else 0.3)) * 1000)
+        lab = f"s{i}"
+        filters.append(
+            f"[{n + i}:a]aformat=sample_rates=44100:channel_layouts=stereo,"
+            f"adelay={delay_ms}:all=1[{lab}]")
+        labels.append(f"[{lab}]")
+    filters.append("".join(labels) + f"amix=inputs={n}:duration=longest:normalize=0[aout]")
+
+    run([
+        "ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters),
+        "-map", f"[{vlabel}]" if n > 1 else "0:v", "-map", "[aout]",
+        "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", out,
     ])
 
 
@@ -127,8 +187,9 @@ def render(payload):
 
     workdir = tempfile.mkdtemp(prefix="render_")
     try:
-        clips = []
+        clips, audios = [], []
         fallbacks = 0
+        move0 = random.randint(0, 3)
         base_seed = random.randint(1, 10_000)
         for i, sc in enumerate(scenes):
             narration = str(sc.get("narration", "")).strip()[:MAX_NARRATION]
@@ -144,8 +205,9 @@ def render(payload):
             if not fetch_image(prompt, img, base_seed + i):
                 fallbacks += 1
                 fallback_image(img)
-            make_clip(img, audio, clip, duration(audio) + 0.6)
+            make_clip(img, clip, duration(audio) + PAD, move0 + i)
             clips.append(clip)
+            audios.append(audio)
             print(f"scene {i + 1}/{len(scenes)} done", flush=True)
 
         if fallbacks > len(scenes) // 2:
@@ -153,13 +215,8 @@ def render(payload):
                 f"Image service unavailable ({fallbacks}/{len(scenes)} images failed). "
                 "Not uploading a video without pictures. Add a POLLINATIONS_API_KEY secret.")
 
-        listfile = os.path.join(workdir, "list.txt")
-        with open(listfile, "w") as f:
-            for c in clips:
-                f.write(f"file '{c}'\n")
         joined = os.path.join(workdir, "joined.mp4")
-        run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listfile,
-             "-c", "copy", joined])
+        assemble(clips, audios, joined)
 
         final = joined
         tracks = glob.glob(os.path.join(MUSIC_DIR, "*.mp3"))
