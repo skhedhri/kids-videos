@@ -53,5 +53,10 @@
     "topic": "The Mimic Octopus",
     "status": "rejected",
     "reason": "The script includes a call to action ('Follow for a new fun fact every day!'), which constitutes commercial solicitation for social media engagement, violating the child-safety policy regarding commercialism."
+  },
+  {
+    "topic": "The Triangle",
+    "status": "uploaded",
+    "videoId": "y-7h4lWyNlA"
   }
 ]
