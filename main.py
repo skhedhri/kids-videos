@@ -20,6 +20,10 @@ VOICE = os.environ.get("VOICE", "en-US-AnaNeural")
 PRIVACY = os.environ.get("PRIVACY", "private")
 SCENES = int(os.environ.get("SCENE_COUNT", "6"))
 SHORTS = os.environ.get("VIDEO_FORMAT", "shorts").lower() == "shorts"
+IMAGE_STYLE = os.environ.get(
+    "IMAGE_STYLE",
+    "3D animated kids cartoon, soft studio lighting, glossy pastel colors, big friendly eyes, "
+    "clean simple background, high quality, sharp")
 
 CATEGORIES = [
     "Animals and their babies", "Colors and shapes", "Counting numbers 1 to 10",
@@ -89,8 +93,10 @@ def write_script(category, recent):
         f"no existing cartoon characters; no medical advice.\n"
         'Return ONLY valid JSON: {"topic":"","title":"catchy title under 60 characters with one emoji",'
         '"description":"2-3 sentences for parents","tags":["8 to 12 tags"],'
-        '"scenes":[{"narration":"","image_prompt":"English prompt: cute colorful flat '
-        'cartoon illustration of ..., vertical composition, child friendly, bold colors, no text, no letters"}]}'
+        '"character":"ONE sentence, in English, describing the single cute recurring cartoon character or main '
+        'subject that appears in EVERY scene (species, colors, shape, outfit)",'
+        '"scenes":[{"narration":"","image_prompt":"English, describe ONLY what happens in this scene: '
+        'action, pose and setting, vertical composition, subject centered"}]}'
     )
 
 
@@ -156,6 +162,10 @@ def main():
         ]
         if len(script["scenes"]) < 3:
             continue
+        character = str(script.get("character", "")).strip()
+        for sc in script["scenes"]:
+            sc["image_prompt"] = (f"{sc['image_prompt']}. Main character in every scene: {character}. "
+                                  f"Style: {IMAGE_STYLE}. No text, no letters.")
         safe, reason = is_safe(script)
         topic = str(script.get("topic", category))
         if not safe:
