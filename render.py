@@ -22,7 +22,10 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-W, H, FPS = 1280, 720, 30
+SHORTS = os.environ.get("VIDEO_FORMAT", "shorts").lower() == "shorts"
+W, H = (720, 1280) if SHORTS else (1280, 720)   # vertical 9:16 for Shorts
+FPS = 30
+VOICE_RATE = os.environ.get("VOICE_RATE", "+0%")
 MUSIC_DIR = os.environ.get("MUSIC_DIR", "/music")
 MAX_SCENES = 20
 MAX_NARRATION = 700
@@ -95,7 +98,7 @@ def tts(text, voice, dest, workdir, idx):
     for attempt in range(3):
         try:
             run(["edge-tts", "--voice", voice, "--file", txt,
-                 "--rate=-8%", "--write-media", dest])
+                 f"--rate={VOICE_RATE}", "--write-media", dest])
             return
         except subprocess.CalledProcessError as e:
             last = e
@@ -103,8 +106,8 @@ def tts(text, voice, dest, workdir, idx):
     raise RuntimeError(f"TTS failed: {last.stderr.decode(errors='ignore')[:300] if last else ''}")
 
 
-TRANSITION = 0.5   # seconds of cross-dissolve between scenes
-PAD = 1.2          # silence after each narration (must be > TRANSITION)
+TRANSITION = 0.3   # seconds of cross-dissolve between scenes
+PAD = 0.8          # pause after each narration (must be >= 2 * TRANSITION + 0.1)
 
 # Camera moves: z = zoom factor, x/y = crop position. F = frames, on = frame number.
 MOVES = [
