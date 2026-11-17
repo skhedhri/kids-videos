@@ -241,7 +241,7 @@ def caption_filters(texts, starts, durs, workdir):
     return filters
 
 
-def assemble(clips, audios, out, texts=None):
+def _assemble(clips, audios, out, texts=None, use_captions=True, simple_transitions=False):
     """Dynamic transitions + pop-in captions; each narration starts when its scene is visible."""
     n = len(clips)
     durs = [duration(c) for c in clips]
@@ -254,9 +254,12 @@ def assemble(clips, audios, out, texts=None):
         inputs += ["-i", a]
 
     # video: chain of xfade transitions (a different style at each cut)
-    styles = random.sample(TRANSITION_STYLES, k=min(len(TRANSITION_STYLES), max(n - 1, 0)))
-    while len(styles) < n - 1:
-        styles.append(random.choice(TRANSITION_STYLES))
+    if simple_transitions:
+        styles = ["fade"] * max(n - 1, 0)
+    else:
+        styles = random.sample(TRANSITION_STYLES, k=min(len(TRANSITION_STYLES), max(n - 1, 0)))
+        while len(styles) < n - 1:
+            styles.append(random.choice(TRANSITION_STYLES))
     if n == 1:
         vlabel, total = "0:v", durs[0]
     else:
@@ -286,19 +289,39 @@ def assemble(clips, audios, out, texts=None):
     filters.append("".join(labels) + f"amix=inputs={n}:duration=longest:normalize=0[aout]")
 
     # captions on top of the finished video
-    caps = caption_filters(texts, starts, adurs, workdir) if texts else []
+    caps = caption_filters(texts, starts, adurs, workdir) if (texts and use_captions) else []
     if caps:
         filters.append(f"[{vlabel}]" + ",".join(caps) + "[vout]")
         vmap = "[vout]"
     else:
         vmap = f"[{vlabel}]" if vlabel != "0:v" else "0:v"
 
-    run([
-        "ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters),
-        "-map", vmap, "-map", "[aout]",
-        "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", out,
-    ])
+    try:
+        run([
+            "ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters),
+            "-map", vmap, "-map", "[aout]",
+            "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "44100", "-ac", "2", out,
+        ])
+    except subprocess.CalledProcessError as e:
+        print("FFMPEG ERROR (last lines):\n" + (e.stderr or b"").decode("utf-8", "ignore")[-1500:],
+              flush=True)
+        raise
+
+
+def assemble(clips, audios, out, texts=None):
+    """Try the full version first; fall back to simpler ones so a video is always produced."""
+    attempts = [(True, False), (False, False), (False, True)]  # (captions, simple transitions)
+    last = None
+    for captions, simple in attempts:
+        try:
+            _assemble(clips, audios, out, texts, captions, simple)
+            return
+        except subprocess.CalledProcessError as e:
+            last = e
+            print(f"Assembly failed (captions={captions}, simple transitions={simple}); "
+                  "trying a simpler version...", flush=True)
+    raise last
 
 
 def render(payload):
