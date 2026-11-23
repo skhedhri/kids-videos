@@ -1,5 +1,5 @@
 """
-Tiny render service used by n8n.
+Render worker: turns a list of scenes into an MP4.
 
 POST /render  {"title": str, "voice": str, "scenes": [{"narration": str, "image_prompt": str}]}
   -> returns an MP4 (video/mp4)
@@ -366,13 +366,23 @@ def render(payload):
 
         final = joined
         tracks = glob.glob(os.path.join(MUSIC_DIR, "*.mp3"))
+        music, level = None, 0.12
         if tracks:
+            music = random.choice(tracks)
+        elif os.environ.get("AMBIENT_MUSIC", "on").lower() != "off":
+            try:
+                music = os.path.join(workdir, "ambient.wav")
+                make_ambient(music, duration(joined) + 1)
+                level = 0.10
+            except Exception as e:
+                print(f"Ambient music failed, continuing without music: {e}", flush=True)
+                music = None
+        if music:
             final = os.path.join(workdir, "final.mp4")
             run([
-                "ffmpeg", "-y", "-i", joined, "-stream_loop", "-1",
-                "-i", random.choice(tracks),
+                "ffmpeg", "-y", "-i", joined, "-stream_loop", "-1", "-i", music,
                 "-filter_complex",
-                "[1:a]volume=0.12[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0[a]",
+                f"[1:a]volume={level}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0[a]",
                 "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", final,
             ])
 
@@ -380,6 +390,19 @@ def render(payload):
             return f.read()
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def make_ambient(dest, seconds):
+    """Soft royalty-free background pad made with ffmpeg (used when music/ has no .mp3)."""
+    run([
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "sine=f=110", "-f", "lavfi", "-i", "sine=f=220",
+        "-f", "lavfi", "-i", "sine=f=277.18", "-f", "lavfi", "-i", "sine=f=329.63",
+        "-filter_complex",
+        "[0][1][2][3]amix=inputs=4:normalize=0,tremolo=f=0.2:d=0.35,lowpass=f=1100,"
+        "aecho=0.8:0.6:70:0.35,volume=0.9",
+        "-t", f"{seconds:.2f}", dest,
+    ])
 
 
 class Handler(BaseHTTPRequestHandler):
