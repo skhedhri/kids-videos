@@ -1,12 +1,16 @@
-name: Daily kids video
+name: Daily video
 
 on:
   schedule:
-    - cron: "0 8 * * *"   # every day at 08:00 UTC
+    - cron: "0 15 * * *"   # every day at 15:00 UTC
   workflow_dispatch:       # lets you start it manually with a button
 
 permissions:
   contents: write
+
+concurrency:
+  group: daily-video
+  cancel-in-progress: false
 
 jobs:
   make-video:
@@ -36,10 +40,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           MUSIC_DIR: music
           # ---- settings you can change ----
+          CONTENT_MODE: facts     # facts (general audience, default) or kids (ages 3-7, fixed mascot)
           LANGUAGE: English
-          VOICE: en-US-AnaNeural
-          PRIVACY: private        # private, unlisted or public
-          SCENE_COUNT: "6"
+          VOICE: en-US-AndrewNeural
+          VOICE_RATE: "+6%"
+          PRIVACY: public         # private, unlisted or public
+          SCENE_COUNT: "8"
           VIDEO_FORMAT: shorts    # shorts (vertical) or landscape
         run: python main.py
 
